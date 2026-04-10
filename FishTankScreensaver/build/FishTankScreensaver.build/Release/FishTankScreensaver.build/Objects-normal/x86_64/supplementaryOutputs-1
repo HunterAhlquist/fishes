@@ -1,0 +1,12 @@
+{
+  "/Users/hunterx/GitHub/fishes/FishTankScreensaver/FishTankScreensaver/Fish.swift" : {
+    "abi-baseline-json" : "/Users/hunterx/GitHub/fishes/FishTankScreensaver/build/FishTankScreensaver.build/Release/FishTankScreensaver.build/Objects-normal/x86_64/FishTankScreensaver.abi.json",
+    "const-values" : "/Users/hunterx/GitHub/fishes/FishTankScreensaver/build/FishTankScreensaver.build/Release/FishTankScreensaver.build/Objects-normal/x86_64/FishTankScreensaver-primary.swiftconstvalues",
+    "dependencies" : "/Users/hunterx/GitHub/fishes/FishTankScreensaver/build/FishTankScreensaver.build/Release/FishTankScreensaver.build/Objects-normal/x86_64/FishTankScreensaver-primary.d",
+    "diagnostics" : "/Users/hunterx/GitHub/fishes/FishTankScreensaver/build/FishTankScreensaver.build/Release/FishTankScreensaver.build/Objects-normal/x86_64/FishTankScreensaver-primary.dia",
+    "objc-header" : "/Users/hunterx/GitHub/fishes/FishTankScreensaver/build/FishTankScreensaver.build/Release/FishTankScreensaver.build/Objects-normal/x86_64/FishTankScreensaver-Swift.h",
+    "swiftdoc" : "/Users/hunterx/GitHub/fishes/FishTankScreensaver/build/FishTankScreensaver.build/Release/FishTankScreensaver.build/Objects-normal/x86_64/FishTankScreensaver.swiftdoc",
+    "swiftmodule" : "/Users/hunterx/GitHub/fishes/FishTankScreensaver/build/FishTankScreensaver.build/Release/FishTankScreensaver.build/Objects-normal/x86_64/FishTankScreensaver.swiftmodule",
+    "swiftsourceinfo" : "/Users/hunterx/GitHub/fishes/FishTankScreensaver/build/FishTankScreensaver.build/Release/FishTankScreensaver.build/Objects-normal/x86_64/FishTankScreensaver.swiftsourceinfo"
+  }
+}
