@@ -1,0 +1,38 @@
+{
+  "name": "DrawAFish Community Tank",
+  "source": "index.html",
+  "description": "Watch community-drawn fish swim around your screen. Fish are loaded from DrawAFish.com.",
+  "aboutUrl": "https://drawafish.com",
+  "author": "fifteen.games",
+  "requirements": ["screen"],
+  "options": [
+    {
+      "name": "fishCount",
+      "type": "slider",
+      "description": "How many fish?",
+      "min": "5",
+      "max": "100",
+      "default": "50"
+    },
+    {
+      "name": "sortType",
+      "type": "text",
+      "description": "Sort: recent, popular, or random",
+      "default": "popular"
+    },
+    {
+      "name": "backgroundColor",
+      "type": "text",
+      "description": "Tank background color (CSS color)",
+      "default": "#e0f7fa"
+    },
+    {
+      "name": "desktopBlur",
+      "type": "slider",
+      "description": "Blur desktop screenshot as background (0 = off, higher = more blur)",
+      "min": "0",
+      "max": "30",
+      "default": "10"
+    }
+  ]
+}

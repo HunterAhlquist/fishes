@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DrawAFish Screensaver</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #e0f7fa;
+            cursor: none;
+        }
+        canvas {
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+        #desktop-bg {
+            position: fixed;
+            top: -5%;
+            left: -5%;
+            width: 110%;
+            height: 110%;
+            z-index: 0;
+            object-fit: cover;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+<img id="desktop-bg" alt="">
+<canvas id="swim-canvas"></canvas>
+<script>
+// ---- Before Dawn URL params (using their expected parsing method) ----
+window.urlParams = window.location.search.split(/[?&]/).slice(1).map(function(paramPair) {
+    return paramPair.split(/=(.+)?/).slice(0, 2);
+}).reduce(function(obj, pairArray) {
+    obj[pairArray[0]] = pairArray[1];
+    return obj;
+}, {});
+
+const SCREEN_WIDTH  = parseInt(window.urlParams.width)  || window.innerWidth;
+const SCREEN_HEIGHT = parseInt(window.urlParams.height) || window.innerHeight;
+const IS_PREVIEW    = window.urlParams.preview === 'true';
+const FISH_COUNT    = parseInt(window.urlParams.fishCount) || 50;
+const SORT_TYPE     = window.urlParams.sortType || 'popular';
+const BG_COLOR      = window.urlParams.backgroundColor || '#e0f7fa';
+const DESKTOP_BLUR  = parseInt(window.urlParams.desktopBlur) || 0;
+
+document.body.style.background = BG_COLOR;
+
+// ---- Desktop screenshot background ----
+if (DESKTOP_BLUR > 0 && window.urlParams.screenshot) {
+    const bgImg = document.getElementById('desktop-bg');
+    const screenshotUrl = unescape(decodeURIComponent(window.urlParams.screenshot));
+    bgImg.onload = function() {
+        bgImg.style.display = 'block';
+        bgImg.style.filter = 'blur(' + DESKTOP_BLUR + 'px)';
+        document.body.style.background = 'transparent';
+    };
+    bgImg.src = screenshotUrl;
+}
+
+// ---- Canvas setup ----
+const swimCanvas = document.getElementById('swim-canvas');
+const swimCtx = swimCanvas.getContext('2d');
+swimCanvas.width = SCREEN_WIDTH;
+swimCanvas.height = SCREEN_HEIGHT;
+swimCanvas.style.width = SCREEN_WIDTH + 'px';
+swimCanvas.style.height = SCREEN_HEIGHT + 'px';
+
+// ---- Backend ----
+const BACKEND_URL = 'https://fishes-be-571679687712.northamerica-northeast1.run.app';
+
+// ---- State ----
+const fishes = [];
+const foodPellets = [];
+const FOOD_SIZE = 8;
+const FOOD_FALL_SPEED = 0.01;
+const FOOD_DETECTION_RADIUS = 200;
+const FOOD_LIFESPAN = 15000;
+const FOOD_ATTRACTION_FORCE = 0.003;
+
+let foodDetectionCache = new Map();
+let cacheUpdateCounter = 0;
+
+// ---- Fish sizing ----
+function calculateFishSize() {
+    const baseDimension = Math.min(swimCanvas.width, swimCanvas.height);
+    const fishWidth = Math.floor(baseDimension * 0.1);
+    const fishHeight = Math.floor(fishWidth * 0.6);
+    return {
+        width: Math.max(30, Math.min(150, fishWidth)),
+        height: Math.max(18, Math.min(90, fishHeight))
+    };
+}
+
+// ---- Crop whitespace from fish image ----
+function cropCanvasToContent(srcCanvas) {
+    const ctx = srcCanvas.getContext('2d');
+    const w = srcCanvas.width;
+    const h = srcCanvas.height;
+    const imgData = ctx.getImageData(0, 0, w, h);
+    let minX = w, minY = h, maxX = 0, maxY = 0;
+    let found = false;
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const i = (y * w + x) * 4;
+            const r = imgData.data[i], g = imgData.data[i+1], b = imgData.data[i+2], a = imgData.data[i+3];
+            if (a > 16 && !(r > 240 && g > 240 && b > 240)) {
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+                found = true;
+            }
+        }
+    }
+    if (!found) return srcCanvas;
+    const cropW = maxX - minX + 1;
+    const cropH = maxY - minY + 1;
+    const cropped = document.createElement('canvas');
+    cropped.width = cropW;
+    cropped.height = cropH;
+    cropped.getContext('2d').drawImage(srcCanvas, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+    return cropped;
+}
+
+function makeDisplayFishCanvas(img, width, height) {
+    const displayCanvas = document.createElement('canvas');
+    displayCanvas.width = width;
+    displayCanvas.height = height;
+    const displayCtx = displayCanvas.getContext('2d');
+    const temp = document.createElement('canvas');
+    temp.width = img.width;
+    temp.height = img.height;
+    temp.getContext('2d').drawImage(img, 0, 0);
+    const cropped = cropCanvasToContent(temp);
+    displayCtx.clearRect(0, 0, width, height);
+    const scale = Math.min(width / cropped.width, height / cropped.height);
+    const drawW = cropped.width * scale;
+    const drawH = cropped.height * scale;
+    const dx = (width - drawW) / 2;
+    const dy = (height - drawH) / 2;
+    displayCtx.drawImage(cropped, 0, 0, cropped.width, cropped.height, dx, dy, drawW, drawH);
+    return displayCanvas;
+}
+
+// ---- Fish object creation ----
+function createFishObject(opts) {
+    return {
+        fishCanvas: opts.fishCanvas,
+        x: opts.x,
+        y: opts.y,
+        direction: opts.direction || 1,
+        phase: opts.phase || 0,
+        amplitude: opts.amplitude || 24,
+        speed: opts.speed || 2,
+        vx: opts.vx || 0,
+        vy: opts.vy || 0,
+        width: opts.width || 80,
+        height: opts.height || 48,
+        peduncle: opts.peduncle || 0.4,
+        docId: opts.docId || null,
+        isDying: false,
+        isEntering: false,
+        opacity: 1,
+        scale: 1
+    };
+}
+
+function loadFishImageToTank(imgUrl, fishData) {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = function() {
+        const fishSize = calculateFishSize();
+        const displayCanvas = makeDisplayFishCanvas(img, fishSize.width, fishSize.height);
+        if (displayCanvas && displayCanvas.width && displayCanvas.height) {
+            const maxX = Math.max(0, swimCanvas.width - fishSize.width);
+            const maxY = Math.max(0, swimCanvas.height - fishSize.height);
+            const x = Math.floor(Math.random() * maxX);
+            const y = Math.floor(Math.random() * maxY);
+            const direction = Math.random() < 0.5 ? -1 : 1;
+            const speed = fishData.speed || (1.5 + Math.random() * 1.5);
+            fishes.push(createFishObject({
+                fishCanvas: displayCanvas,
+                x, y,
+                direction,
+                phase: Math.random() * Math.PI * 2,
+                amplitude: 20 + Math.random() * 16,
+                speed,
+                vx: speed * direction * 0.1,
+                vy: (Math.random() - 0.5) * 0.5,
+                width: fishSize.width,
+                height: fishSize.height,
+                peduncle: fishData.peduncle || 0.4,
+                docId: fishData.docId || null
+            }));
+        }
+    };
+    img.onerror = function() {
+        console.warn('Failed to load fish image:', imgUrl);
+    };
+    img.src = imgUrl;
+}
+
+// ---- Food system (auto-drop for screensaver ambience) ----
+function createFoodPellet(x, y) {
+    return { x, y, vy: 0, createdAt: Date.now(), consumed: false, size: FOOD_SIZE };
+}
+
+function autoDropFood() {
+    // Occasionally drop food from a random position at the top
+    if (Math.random() < 0.002 && fishes.length > 0) {
+        const x = Math.random() * swimCanvas.width;
+        const count = Math.floor(Math.random() * 3) + 2;
+        for (let i = 0; i < count; i++) {
+            foodPellets.push(createFoodPellet(
+                x + (Math.random() - 0.5) * 20,
+                (Math.random() - 0.5) * 10
+            ));
+        }
+    }
+}
+
+function updateFoodPellets() {
+    for (let i = foodPellets.length - 1; i >= 0; i--) {
+        const pellet = foodPellets[i];
+        if (pellet.consumed || Date.now() - pellet.createdAt > FOOD_LIFESPAN) {
+            foodPellets.splice(i, 1);
+            continue;
+        }
+        pellet.vy += FOOD_FALL_SPEED;
+        pellet.y += pellet.vy;
+        if (pellet.y > swimCanvas.height - pellet.size) {
+            pellet.y = swimCanvas.height - pellet.size;
+            pellet.vy = 0;
+        }
+        for (const fish of fishes) {
+            const fishCenterX = fish.x + fish.width / 2;
+            const fishCenterY = fish.y + fish.height / 2;
+            const dx = pellet.x - fishCenterX;
+            const dy = pellet.y - fishCenterY;
+            if (Math.sqrt(dx*dx + dy*dy) < fish.width / 2 + pellet.size) {
+                pellet.consumed = true;
+                break;
+            }
+        }
+    }
+}
+
+function renderFoodPellets() {
+    if (foodPellets.length === 0) return;
+    swimCtx.fillStyle = '#FF6B35';
+    for (const pellet of foodPellets) {
+        if (!pellet.consumed) {
+            swimCtx.beginPath();
+            swimCtx.arc(pellet.x, pellet.y, pellet.size, 0, Math.PI * 2);
+            swimCtx.fill();
+        }
+    }
+}
+
+// ---- Drawing: wiggling fish ----
+function drawWigglingFish(fish, x, y, direction, time, phase) {
+    const src = fish.fishCanvas;
+    const w = fish.width;
+    const h = fish.height;
+    const tailEnd = Math.floor(w * fish.peduncle);
+
+    if (fish.opacity !== undefined && fish.opacity < 1) {
+        swimCtx.globalAlpha = fish.opacity;
+    }
+
+    for (let i = 0; i < w; i++) {
+        let isTail, t, wiggle, drawCol, drawX;
+        if (direction === 1) {
+            isTail = i < tailEnd;
+            t = isTail ? (tailEnd - i - 1) / (tailEnd - 1) : 0;
+            wiggle = isTail ? Math.sin(time * 3 + phase + t * 2) * t * 12 : 0;
+            drawCol = i;
+            drawX = x + i + wiggle;
+        } else {
+            isTail = i >= w - tailEnd;
+            t = isTail ? (i - (w - tailEnd)) / (tailEnd - 1) : 0;
+            wiggle = isTail ? Math.sin(time * 3 + phase + t * 2) * t * 12 : 0;
+            drawCol = w - i - 1;
+            drawX = x + i - wiggle;
+        }
+        swimCtx.save();
+        swimCtx.translate(drawX, y);
+        swimCtx.drawImage(src, drawCol, 0, 1, h, 0, 0, 1, h);
+        swimCtx.restore();
+    }
+
+    if (fish.opacity !== undefined && fish.opacity < 1) {
+        swimCtx.globalAlpha = 1;
+    }
+}
+
+// ---- Main animation loop ----
+function animateFishes() {
+    swimCtx.clearRect(0, 0, swimCanvas.width, swimCanvas.height);
+    const time = Date.now() / 500;
+
+    autoDropFood();
+    updateFoodPellets();
+
+    cacheUpdateCounter++;
+    if (cacheUpdateCounter % 5 === 0) {
+        foodDetectionCache.clear();
+    }
+
+    for (const fish of fishes) {
+        // Food detection (cached)
+        const fishId = fish.docId || `fish_${fishes.indexOf(fish)}`;
+        let foodData = foodDetectionCache.get(fishId);
+
+        if (!foodData) {
+            const fishCenterX = fish.x + fish.width / 2;
+            const fishCenterY = fish.y + fish.height / 2;
+            let nearestFood = null, nearestDistance = FOOD_DETECTION_RADIUS, hasNearbyFood = false;
+            for (const pellet of foodPellets) {
+                if (pellet.consumed) continue;
+                const dx = pellet.x - fishCenterX;
+                const dy = pellet.y - fishCenterY;
+                const distSq = dx*dx + dy*dy;
+                if (distSq < FOOD_DETECTION_RADIUS * FOOD_DETECTION_RADIUS) {
+                    hasNearbyFood = true;
+                    const dist = Math.sqrt(distSq);
+                    if (dist < nearestDistance) {
+                        nearestFood = pellet;
+                        nearestDistance = dist;
+                    }
+                }
+            }
+            foodData = { nearestFood, nearestDistance, hasNearbyFood, fishCenterX, fishCenterY };
+            foodDetectionCache.set(fishId, foodData);
+        }
+
+        // Initialize velocity
+        if (!fish.vx) fish.vx = 0;
+        if (!fish.vy) fish.vy = 0;
+
+        // Base swimming movement
+        fish.vx += fish.speed * fish.direction * 0.1;
+
+        // Food attraction
+        if (foodData.nearestFood) {
+            const dx = foodData.nearestFood.x - foodData.fishCenterX;
+            const dy = foodData.nearestFood.y - foodData.fishCenterY;
+            const dist = foodData.nearestDistance;
+            if (dist > 0) {
+                const ratio = dist / FOOD_DETECTION_RADIUS;
+                const strength = FOOD_ATTRACTION_FORCE * (1 - ratio * ratio);
+                fish.vx += (dx / dist) * strength;
+                fish.vy += (dy / dist) * strength;
+                if (Math.abs(dx) > 10) fish.direction = dx > 0 ? 1 : -1;
+            }
+        }
+
+        // Move
+        fish.x += fish.vx;
+        fish.y += fish.vy;
+
+        // Edge collisions
+        let hitEdge = false;
+        if (fish.x <= 0) {
+            fish.x = 0; fish.direction = 1; fish.vx = Math.abs(fish.vx); hitEdge = true;
+        } else if (fish.x >= swimCanvas.width - fish.width) {
+            fish.x = swimCanvas.width - fish.width; fish.direction = -1; fish.vx = -Math.abs(fish.vx); hitEdge = true;
+        }
+        if (fish.y <= 0) {
+            fish.y = 0; fish.vy = Math.abs(fish.vy) * 0.5; hitEdge = true;
+        } else if (fish.y >= swimCanvas.height - fish.height) {
+            fish.y = swimCanvas.height - fish.height; fish.vy = -Math.abs(fish.vy) * 0.5; hitEdge = true;
+        }
+
+        // Friction
+        const friction = foodData.hasNearbyFood ? 0.88 : 0.85;
+        fish.vx *= friction;
+        fish.vy *= friction;
+
+        // Limit velocity
+        const maxVel = fish.speed * 2;
+        const velMag = Math.sqrt(fish.vx * fish.vx + fish.vy * fish.vy);
+        if (velMag > maxVel) {
+            fish.vx = (fish.vx / velMag) * maxVel;
+            fish.vy = (fish.vy / velMag) * maxVel;
+        }
+
+        // Minimum movement
+        if (Math.abs(fish.vx) < 0.1) fish.vx = fish.speed * fish.direction * 0.1;
+
+        if (hitEdge) {
+            fish.vx += fish.speed * fish.direction * 0.2;
+            fish.vy += (Math.random() - 0.5) * 0.3;
+        }
+
+        // Swim Y with sine wave
+        const currentAmplitude = foodData.hasNearbyFood ? fish.amplitude * 0.3 : fish.amplitude;
+        const swimY = fish.y + Math.sin(time + fish.phase) * currentAmplitude;
+
+        drawWigglingFish(fish, fish.x, swimY, fish.direction, time, fish.phase);
+    }
+
+    renderFoodPellets();
+    requestAnimationFrame(animateFishes);
+}
+
+// ---- Load fish from API ----
+async function loadFish() {
+    try {
+        const params = new URLSearchParams({
+            limit: FISH_COUNT.toString(),
+            order: 'desc',
+            isVisible: 'true',
+            deleted: 'false'
+        });
+
+        switch (SORT_TYPE) {
+            case 'popular':
+                params.append('orderBy', 'score');
+                break;
+            case 'random':
+                params.append('orderBy', 'CreatedAt');
+                params.append('random', 'true');
+                break;
+            case 'recent':
+            default:
+                params.append('orderBy', 'CreatedAt');
+                break;
+        }
+
+        const response = await fetch(`${BACKEND_URL}/api/fish?${params}`);
+        if (!response.ok) throw new Error(`API error: ${response.status}`);
+
+        const data = await response.json();
+
+        data.data.forEach(fishItem => {
+            let fishData, fishId;
+            if (fishItem.data && typeof fishItem.data === 'object') {
+                fishData = fishItem.data;
+                fishId = fishItem.id;
+            } else if (fishItem.id && (fishItem.image || fishItem.Image)) {
+                fishData = fishItem;
+                fishId = fishItem.id;
+            } else {
+                return;
+            }
+            if (!fishData) return;
+
+            const imageUrl = fishData.image || fishData.Image;
+            if (!imageUrl || typeof imageUrl !== 'string' || !imageUrl.startsWith('http')) return;
+
+            loadFishImageToTank(imageUrl, { ...fishData, docId: fishId });
+        });
+    } catch (error) {
+        console.error('Error loading fish:', error);
+    }
+}
+
+// ---- Periodically refresh fish ----
+function setupPeriodicRefresh() {
+    setInterval(async () => {
+        try {
+            const params = new URLSearchParams({
+                orderBy: 'CreatedAt',
+                order: 'desc',
+                limit: '5',
+                isVisible: 'true',
+                deleted: 'false'
+            });
+
+            const response = await fetch(`${BACKEND_URL}/api/fish?${params}`);
+            if (!response.ok) return;
+            const data = await response.json();
+
+            data.data.forEach(fishItem => {
+                let fishData, fishId;
+                if (fishItem.data && typeof fishItem.data === 'object') {
+                    fishData = fishItem.data;
+                    fishId = fishItem.id;
+                } else if (fishItem.id && (fishItem.image || fishItem.Image)) {
+                    fishData = fishItem;
+                    fishId = fishItem.id;
+                } else {
+                    return;
+                }
+                if (!fishData) return;
+
+                const imageUrl = fishData.image || fishData.Image;
+                if (!imageUrl || typeof imageUrl !== 'string' || !imageUrl.startsWith('http')) return;
+
+                // Only add new fish we haven't seen
+                if (!fishes.some(f => f.docId === fishId)) {
+                    // If at capacity, remove the oldest fish
+                    if (fishes.length >= FISH_COUNT) {
+                        fishes.shift();
+                    }
+                    loadFishImageToTank(imageUrl, { ...fishData, docId: fishId });
+                }
+            });
+        } catch (e) {
+            // Silently fail on refresh - screensaver keeps running
+        }
+    }, 60000); // Check every 60 seconds
+}
+
+// ---- Resize handler ----
+window.addEventListener('resize', () => {
+    swimCanvas.width = window.innerWidth;
+    swimCanvas.height = window.innerHeight;
+});
+
+// ---- Start ----
+loadFish();
+setupPeriodicRefresh();
+requestAnimationFrame(animateFishes);
+</script>
+</body>
+</html>
