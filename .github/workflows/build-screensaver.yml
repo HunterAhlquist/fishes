@@ -1,0 +1,91 @@
+name: Build Fish Tank Screensaver
+
+on:
+  push:
+    tags:
+      - 'screensaver-v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a GitHub release'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  build:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: FishTankScreensaver
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Build screensaver
+        run: |
+          xcodebuild \
+            -project FishTankScreensaver.xcodeproj \
+            -target FishTankScreensaver \
+            -configuration Release \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            clean build
+
+      - name: Package
+        run: |
+          BUILD_DIR=$(xcodebuild \
+            -project FishTankScreensaver.xcodeproj \
+            -target FishTankScreensaver \
+            -configuration Release \
+            -showBuildSettings 2>/dev/null \
+            | grep " BUILT_PRODUCTS_DIR" | sed 's/.*= //')
+
+          cd "$BUILD_DIR"
+          ditto -c -k --keepParent FishTankScreensaver.saver FishTankScreensaver.zip
+          mv FishTankScreensaver.zip "$GITHUB_WORKSPACE/"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FishTankScreensaver
+          path: FishTankScreensaver.zip
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/screensaver-v') || inputs.create_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME:-screensaver-manual-$(date +%Y%m%d-%H%M%S)}"
+          gh release create "$TAG" \
+            "$GITHUB_WORKSPACE/FishTankScreensaver.zip" \
+            --title "Fish Tank Screensaver ${TAG#screensaver-}" \
+            --notes "$(cat <<'NOTES'
+          ## 🐟 Fish Tank Screensaver for macOS
+
+          A native macOS screensaver that displays community-drawn fish from [DrawAFish.com](https://drawafish.com).
+
+          ### Installation
+          1. Download **FishTankScreensaver.zip** below
+          2. Unzip the file
+          3. Double-click **FishTankScreensaver.saver**
+          4. macOS will ask if you want to install it — click **Install**
+          5. Go to **System Settings > Screen Saver** and select **Fish Tank**
+
+          > **Note:** Since this screensaver is not signed with an Apple Developer certificate, you may need to right-click the .saver file and select "Open" instead of double-clicking, then confirm you want to open it.
+
+          ### Options
+          Click "Options..." in Screen Saver settings to configure:
+          - **Background color**
+          - **Number of fish** (1–100)
+          - **Fish sorting** (Recent / Popular / Random)
+
+          ### Requirements
+          - macOS 13.0 (Ventura) or later
+          - Internet connection (fish are loaded from DrawAFish.com)
+          NOTES
+          )"

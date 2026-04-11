@@ -8,3 +8,9 @@
 node_modules/
 .DS_Store
 *.log
+
+# Xcode build artifacts
+FishTankScreensaver/build/
+DerivedData/
+*.xcuserdata
+xcuserdata/
