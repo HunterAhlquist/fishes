@@ -1,2 +1,0 @@
-Target dependency graph (1 target)
-Target 'FishTankScreensaver' in project 'FishTankScreensaver' (no dependencies)
