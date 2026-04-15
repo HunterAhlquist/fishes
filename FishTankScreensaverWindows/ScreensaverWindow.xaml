@@ -11,12 +11,6 @@
     <Grid>
         <wv2:WebView2 x:Name="WebView"
                       DefaultBackgroundColor="Transparent" />
-        <!-- Transparent overlay to intercept all mouse input before WebView2 -->
-        <Grid x:Name="InputOverlay"
-              Background="Transparent"
-              MouseDown="Overlay_MouseDown"
-              MouseMove="Overlay_MouseMove"
-              MouseWheel="Overlay_MouseWheel" />
         <!-- Loading overlay shown while WebView2 initializes -->
         <Grid x:Name="LoadingOverlay" Background="#FF0E1C2A">
             <TextBlock Text="Loading Fish Tank..."

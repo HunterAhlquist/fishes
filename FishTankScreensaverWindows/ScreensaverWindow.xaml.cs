@@ -1,6 +1,9 @@
 using System;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
+using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 
 namespace FishTankScreensaver
@@ -10,6 +13,20 @@ namespace FishTankScreensaver
         private Point? _initialMousePosition;
         private bool _isClosing;
         private readonly bool _isPreview;
+        private DispatcherTimer? _inputPollTimer;
+
+        [DllImport("user32.dll")]
+        private static extern bool GetCursorPos(out POINT lpPoint);
+
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT
+        {
+            public int X;
+            public int Y;
+        }
 
         public ScreensaverWindow(bool isPreview = false)
         {
@@ -27,12 +44,7 @@ namespace FishTankScreensaver
                 Title = "Fish Tank Screensaver Preview";
                 ResizeMode = ResizeMode.CanResize;
                 WindowStartupLocation = WindowStartupLocation.CenterScreen;
-                // Remove the input-blocking overlay in preview mode
-                InputOverlay.Visibility = Visibility.Collapsed;
             }
-
-            // Keyboard events work at the window level regardless of WebView2
-            PreviewKeyDown += Window_KeyDown;
 
             Loaded += ScreensaverWindow_Loaded;
         }
@@ -41,6 +53,19 @@ namespace FishTankScreensaver
         {
             try
             {
+                // Start polling for input at the OS level — this catches all input
+                // even when WebView2 has focus
+                if (!_isPreview)
+                {
+                    GetCursorPos(out var startPos);
+                    _initialMousePosition = new Point(startPos.X, startPos.Y);
+
+                    _inputPollTimer = new DispatcherTimer();
+                    _inputPollTimer.Interval = TimeSpan.FromMilliseconds(100);
+                    _inputPollTimer.Tick += InputPollTimer_Tick;
+                    _inputPollTimer.Start();
+                }
+
                 var env = await CoreWebView2Environment.CreateAsync(
                     userDataFolder: System.IO.Path.Combine(
                         System.IO.Path.GetTempPath(), "FishTankScreensaver_WebView2"));
@@ -52,14 +77,15 @@ namespace FishTankScreensaver
                 WebView.CoreWebView2.Settings.IsZoomControlEnabled = false;
                 WebView.CoreWebView2.Settings.IsStatusBarEnabled = false;
 
-                // Once navigation completes, hide loading overlay and inject CSS to kill scrollbars
                 WebView.CoreWebView2.NavigationCompleted += async (s, args) =>
                 {
+                    // Kill scrollbars and disable all pointer interaction in the page
                     await WebView.CoreWebView2.ExecuteScriptAsync(@"
                         document.documentElement.style.overflow = 'hidden';
                         document.body.style.overflow = 'hidden';
                         document.body.style.margin = '0';
                         document.body.style.padding = '0';
+                        document.body.style.pointerEvents = 'none';
                     ");
                     Dispatcher.Invoke(() => LoadingOverlay.Visibility = Visibility.Collapsed);
                 };
@@ -78,48 +104,54 @@ namespace FishTankScreensaver
             }
         }
 
-        private void Window_KeyDown(object sender, KeyEventArgs e)
+        private void InputPollTimer_Tick(object? sender, EventArgs e)
         {
-            if (!_isPreview)
-                CloseScreensaver();
-        }
-
-        private void Overlay_MouseDown(object sender, MouseButtonEventArgs e)
-        {
-            if (!_isPreview)
-                CloseScreensaver();
-        }
-
-        private void Overlay_MouseMove(object sender, MouseEventArgs e)
-        {
-            if (_isPreview) return;
-
-            var currentPosition = e.GetPosition(this);
-
-            if (_initialMousePosition == null)
+            // Check mouse movement
+            if (GetCursorPos(out var pos) && _initialMousePosition.HasValue)
             {
-                _initialMousePosition = currentPosition;
-                return;
+                var dx = pos.X - _initialMousePosition.Value.X;
+                var dy = pos.Y - _initialMousePosition.Value.Y;
+                if (Math.Abs(dx) > 10 || Math.Abs(dy) > 10)
+                {
+                    CloseScreensaver();
+                    return;
+                }
             }
 
-            var delta = currentPosition - _initialMousePosition.Value;
-            if (Math.Abs(delta.X) > 10 || Math.Abs(delta.Y) > 10)
+            // Check if any key or mouse button is pressed
+            // Check mouse buttons (VK_LBUTTON=0x01, VK_RBUTTON=0x02, VK_MBUTTON=0x04)
+            for (int vk = 0x01; vk <= 0x04; vk++)
             {
-                CloseScreensaver();
+                if ((GetAsyncKeyState(vk) & 0x8000) != 0)
+                {
+                    CloseScreensaver();
+                    return;
+                }
             }
-        }
 
-        private void Overlay_MouseWheel(object sender, MouseWheelEventArgs e)
-        {
-            if (!_isPreview)
-                CloseScreensaver();
+            // Check keyboard keys (0x08 through 0xFE covers all virtual key codes)
+            for (int vk = 0x08; vk <= 0xFE; vk++)
+            {
+                if ((GetAsyncKeyState(vk) & 0x8000) != 0)
+                {
+                    CloseScreensaver();
+                    return;
+                }
+            }
         }
 
         private void CloseScreensaver()
         {
             if (_isClosing) return;
             _isClosing = true;
+            _inputPollTimer?.Stop();
             Close();
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            _inputPollTimer?.Stop();
+            base.OnClosed(e);
         }
     }
 }
