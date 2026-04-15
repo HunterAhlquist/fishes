@@ -9,10 +9,27 @@ namespace FishTankScreensaver
     {
         private Point? _initialMousePosition;
         private bool _isClosing;
+        private readonly bool _isPreview;
 
-        public ScreensaverWindow()
+        public ScreensaverWindow(bool isPreview = false)
         {
             InitializeComponent();
+            _isPreview = isPreview;
+
+            if (isPreview)
+            {
+                // Preview mode: small resizable window, not topmost
+                WindowStyle = WindowStyle.SingleBorderWindow;
+                WindowState = WindowState.Normal;
+                Topmost = false;
+                Cursor = Cursors.Arrow;
+                Width = 800;
+                Height = 500;
+                Title = "Fish Tank Screensaver Preview";
+                ResizeMode = ResizeMode.CanResize;
+                WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            }
+
             Loaded += ScreensaverWindow_Loaded;
         }
 
@@ -54,16 +71,20 @@ namespace FishTankScreensaver
 
         private void Window_KeyDown(object sender, KeyEventArgs e)
         {
-            CloseScreensaver();
+            if (!_isPreview)
+                CloseScreensaver();
         }
 
         private void Window_MouseDown(object sender, MouseButtonEventArgs e)
         {
-            CloseScreensaver();
+            if (!_isPreview)
+                CloseScreensaver();
         }
 
         private void Window_MouseMove(object sender, MouseEventArgs e)
         {
+            if (_isPreview) return;
+
             var currentPosition = e.GetPosition(this);
 
             if (_initialMousePosition == null)
