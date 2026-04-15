@@ -1,5 +1,5 @@
 using System;
-using System.Linq;
+using System.IO;
 using System.Windows;
 
 namespace FishTankScreensaver
@@ -8,37 +8,30 @@ namespace FishTankScreensaver
     {
         private void Application_Startup(object sender, StartupEventArgs e)
         {
-            // Windows screensaver args come in various formats:
-            //   /s           - run screensaver
-            //   /c           - configure (no parent)
-            //   /c:HWND      - configure (with parent window handle)
-            //   /p HWND      - preview in small window
-            //   /p:HWND      - preview in small window (alternate format)
-            // Args may also be split across multiple tokens
+            // Use the raw command line — WPF's e.Args can mangle screensaver arguments.
+            // Windows passes: FishTankScreensaver.scr /s
+            //                 FishTankScreensaver.scr /c:HWND
+            //                 FishTankScreensaver.scr /p HWND
+            var cmdLine = Environment.CommandLine.ToLower();
 
-            var cmdLine = string.Join(" ", e.Args).ToLower().Trim();
+            // Log for debugging
+            var logPath = Path.Combine(Path.GetTempPath(), "fishtank_screensaver_win.log");
+            try { File.AppendAllText(logPath, $"[{DateTime.Now:O}] cmdLine: {cmdLine}\n"); } catch { }
 
-            if (string.IsNullOrEmpty(cmdLine) || cmdLine.StartsWith("/c") || cmdLine.StartsWith("-c"))
+            if (cmdLine.Contains("/s"))
             {
-                // Configure mode (also default when no args)
-                var window = new SettingsWindow();
-                window.Show();
-            }
-            else if (cmdLine.StartsWith("/s") || cmdLine.StartsWith("-s"))
-            {
-                // Full screensaver mode
                 var window = new ScreensaverWindow();
                 window.Show();
             }
-            else if (cmdLine.StartsWith("/p") || cmdLine.StartsWith("-p"))
+            else if (cmdLine.Contains("/p"))
             {
-                // Preview mode - show a small preview window
+                // Preview mode — show a small standalone preview window
                 var window = new ScreensaverWindow(isPreview: true);
                 window.Show();
             }
             else
             {
-                // Unknown args, show settings
+                // Default: configure mode (/c or no args)
                 var window = new SettingsWindow();
                 window.Show();
             }
