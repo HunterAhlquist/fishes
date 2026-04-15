@@ -978,28 +978,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     const urlParams = new URLSearchParams(window.location.search);
     const sortParam = urlParams.get('sort');
     const capacityParam = urlParams.get('capacity');
-    const screensaverMode = urlParams.get('mode') === 'screensaver';
-    const bgParam = urlParams.get('bg');
     let initialSort = 'recent'; // default
-
-    // Screensaver mode: hide all controls and footer, make canvas fill viewport
-    if (screensaverMode) {
-        document.body.style.margin = '0';
-        document.body.style.padding = '0';
-        document.body.style.overflow = 'hidden';
-        document.body.style.cursor = 'none';
-        const controls = document.querySelector('.controls-container');
-        if (controls) controls.style.display = 'none';
-        const footer = document.querySelector('footer');
-        if (footer) footer.style.display = 'none';
-    }
-
-    // Background color parameter (hex without #, e.g. bg=e0f7fa)
-    if (bgParam && /^[0-9a-fA-F]{6}$/.test(bgParam)) {
-        swimCanvas.style.background = '#' + bgParam;
-        // Store for use in animation loop fill
-        window._tankBgColor = '#' + bgParam;
-    }
 
     // Validate sort parameter and set dropdown
     if (sortParam && ['recent', 'popular', 'random'].includes(sortParam)) {
@@ -1425,12 +1404,7 @@ let foodDetectionCache = new Map();
 let cacheUpdateCounter = 0;
 
 function animateFishes() {
-    if (window._tankBgColor) {
-        swimCtx.fillStyle = window._tankBgColor;
-        swimCtx.fillRect(0, 0, swimCanvas.width, swimCanvas.height);
-    } else {
-        swimCtx.clearRect(0, 0, swimCanvas.width, swimCanvas.height);
-    }
+    swimCtx.clearRect(0, 0, swimCanvas.width, swimCanvas.height);
     const time = Date.now() / 500;
 
     // Update fish count display occasionally

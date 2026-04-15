@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
-using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using Microsoft.Web.WebView2.Core;
 
 namespace FishTankScreensaver
 {
@@ -13,7 +15,16 @@ namespace FishTankScreensaver
         private Point? _initialMousePosition;
         private bool _isClosing;
         private readonly bool _isPreview;
+
+        private readonly List<Fish> _fishes = new();
+        private bool _isLoading;
+        private bool _hasStartedLoading;
+        private ScreensaverSettings _settings = null!;
+        private Color _bgColor;
+
+        private DispatcherTimer? _animationTimer;
         private DispatcherTimer? _inputPollTimer;
+        private readonly DateTime _startTime = DateTime.UtcNow;
 
         [DllImport("user32.dll")]
         private static extern bool GetCursorPos(out POINT lpPoint);
@@ -22,11 +33,7 @@ namespace FishTankScreensaver
         private static extern short GetAsyncKeyState(int vKey);
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct POINT
-        {
-            public int X;
-            public int Y;
-        }
+        private struct POINT { public int X, Y; }
 
         public ScreensaverWindow(bool isPreview = false)
         {
@@ -46,102 +53,168 @@ namespace FishTankScreensaver
                 WindowStartupLocation = WindowStartupLocation.CenterScreen;
             }
 
-            // Set loading overlay to match the user's chosen background color
-            try
-            {
-                var preloadSettings = ScreensaverSettings.Load();
-                var hex = preloadSettings.BackgroundColor;
-                if (hex.Length == 6)
-                {
-                    var r = Convert.ToByte(hex.Substring(0, 2), 16);
-                    var g = Convert.ToByte(hex.Substring(2, 2), 16);
-                    var b = Convert.ToByte(hex.Substring(4, 2), 16);
-                    LoadingOverlay.Background = new System.Windows.Media.SolidColorBrush(
-                        System.Windows.Media.Color.FromRgb(r, g, b));
-                }
-            }
-            catch { }
+            _settings = ScreensaverSettings.Load();
+            _bgColor = ParseHexColor(_settings.BackgroundColor);
+            Background = new SolidColorBrush(_bgColor);
 
             Loaded += ScreensaverWindow_Loaded;
         }
 
-        private async void ScreensaverWindow_Loaded(object sender, RoutedEventArgs e)
+        private static Color ParseHexColor(string hex)
         {
             try
             {
-                // Start polling for input at the OS level — this catches all input
-                // even when WebView2 has focus
-                if (!_isPreview)
-                {
-                    GetCursorPos(out var startPos);
-                    _initialMousePosition = new Point(startPos.X, startPos.Y);
-
-                    _inputPollTimer = new DispatcherTimer();
-                    _inputPollTimer.Interval = TimeSpan.FromMilliseconds(100);
-                    _inputPollTimer.Tick += InputPollTimer_Tick;
-                    _inputPollTimer.Start();
-                }
-
-                var env = await CoreWebView2Environment.CreateAsync(
-                    userDataFolder: System.IO.Path.Combine(
-                        System.IO.Path.GetTempPath(), "FishTankScreensaver_WebView2"));
-
-                await WebView.EnsureCoreWebView2Async(env);
-
-                WebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-                WebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
-                WebView.CoreWebView2.Settings.IsZoomControlEnabled = false;
-                WebView.CoreWebView2.Settings.IsStatusBarEnabled = false;
-
-                var settings = ScreensaverSettings.Load();
-                var bgColor = settings.BackgroundColor;
-
-                WebView.CoreWebView2.NavigationCompleted += async (s, args) =>
-                {
-                    await WebView.CoreWebView2.ExecuteScriptAsync($@"
-                        document.documentElement.style.overflow = 'hidden';
-                        document.body.style.overflow = 'hidden';
-                        document.body.style.margin = '0';
-                        document.body.style.padding = '0';
-                        document.body.style.pointerEvents = 'none';
-                        document.body.style.background = '#{bgColor}';
-
-                        // Force background color on the canvas
-                        var canvas = document.getElementById('swim-canvas');
-                        if (canvas) {{
-                            canvas.style.setProperty('background', '#{bgColor}', 'important');
-
-                            // Monkey-patch clearRect to fill with bg color instead of clearing
-                            var ctx = canvas.getContext('2d');
-                            var origClearRect = ctx.clearRect.bind(ctx);
-                            ctx.clearRect = function(x, y, w, h) {{
-                                origClearRect(x, y, w, h);
-                                var prevFill = ctx.fillStyle;
-                                ctx.fillStyle = '#{bgColor}';
-                                ctx.fillRect(x, y, w, h);
-                                ctx.fillStyle = prevFill;
-                            }};
-                        }}
-                    ");
-                    Dispatcher.Invoke(() => LoadingOverlay.Visibility = Visibility.Collapsed);
-                };
-
-                WebView.CoreWebView2.Navigate(settings.BuildTankUrl());
+                if (hex.Length == 6)
+                    return Color.FromRgb(
+                        Convert.ToByte(hex.Substring(0, 2), 16),
+                        Convert.ToByte(hex.Substring(2, 2), 16),
+                        Convert.ToByte(hex.Substring(4, 2), 16));
             }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    $"Failed to initialize WebView2. Please ensure the WebView2 Runtime is installed.\n\n{ex.Message}",
-                    "Fish Tank Screensaver",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
-                Close();
-            }
+            catch { }
+            return Color.FromRgb(224, 247, 250); // #e0f7fa
         }
+
+        private void ScreensaverWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            // Start input polling for screensaver mode
+            if (!_isPreview)
+            {
+                GetCursorPos(out var startPos);
+                _initialMousePosition = new Point(startPos.X, startPos.Y);
+
+                _inputPollTimer = new DispatcherTimer();
+                _inputPollTimer.Interval = TimeSpan.FromMilliseconds(100);
+                _inputPollTimer.Tick += InputPollTimer_Tick;
+                _inputPollTimer.Start();
+            }
+
+            // Start animation loop at 60 FPS
+            _animationTimer = new DispatcherTimer();
+            _animationTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / 60.0);
+            _animationTimer.Tick += AnimateOneFrame;
+            _animationTimer.Start();
+        }
+
+        private double CurrentTime => (DateTime.UtcNow - _startTime).TotalSeconds;
+
+        // --- Fish Loading ---
+
+        private async void LoadFishFromAPI()
+        {
+            if (_isLoading) return;
+            _isLoading = true;
+
+            var fishDataList = await FishAPI.FetchFishAsync(_settings.SortType, _settings.FishCount);
+
+            var validFish = fishDataList.FindAll(f => f.ImageURL != null && f.ImageURL.StartsWith("http"));
+            if (validFish.Count == 0)
+            {
+                _isLoading = false;
+                StatusText.Text = "No fish available.";
+                return;
+            }
+
+            var fishSize = CalculateFishSize();
+            double cw = RootGrid.ActualWidth;
+            double ch = RootGrid.ActualHeight;
+
+            var newFishes = new List<Fish>();
+
+            foreach (var fishData in validFish)
+            {
+                var imageBytes = await FishAPI.LoadImageDataAsync(fishData.ImageURL!);
+                if (imageBytes == null) continue;
+
+                try
+                {
+                    var bitmapImage = new BitmapImage();
+                    bitmapImage.BeginInit();
+                    bitmapImage.StreamSource = new MemoryStream(imageBytes);
+                    bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
+                    bitmapImage.EndInit();
+                    bitmapImage.Freeze();
+
+                    var fish = new Fish(bitmapImage, cw, ch,
+                        fishSize.Width, fishSize.Height,
+                        fishData.ArtistName, fishData.Id, fishData.Score);
+                    newFishes.Add(fish);
+                }
+                catch { }
+            }
+
+            _fishes.Clear();
+            _fishes.AddRange(newFishes);
+            _isLoading = false;
+
+            if (_fishes.Count > 0)
+                StatusText.Visibility = Visibility.Collapsed;
+            else
+                StatusText.Text = "No fish available.";
+        }
+
+        private Size CalculateFishSize()
+        {
+            double baseDimension = Math.Min(RootGrid.ActualWidth, RootGrid.ActualHeight);
+            double fishWidth = Math.Floor(baseDimension * 0.1);
+            double fishHeight = Math.Floor(fishWidth * 0.6);
+            return new Size(
+                Math.Max(30, Math.Min(150, fishWidth)),
+                Math.Max(18, Math.Min(90, fishHeight)));
+        }
+
+        // --- Animation ---
+
+        private void AnimateOneFrame(object? sender, EventArgs e)
+        {
+            double cw = RootGrid.ActualWidth;
+            double ch = RootGrid.ActualHeight;
+
+            if (!_hasStartedLoading && cw > 0 && ch > 0)
+            {
+                _hasStartedLoading = true;
+                LoadFishFromAPI();
+            }
+
+            double time = CurrentTime / 0.5; // Match macOS: CACurrentMediaTime() / 0.5
+
+            foreach (var fish in _fishes)
+            {
+                fish.UpdatePhysics(cw, ch);
+                fish.UpdateEntrance(CurrentTime);
+                fish.UpdateDeath(CurrentTime);
+            }
+            _fishes.RemoveAll(f => f.IsDeathComplete(CurrentTime));
+
+            // Render frame
+            if (cw <= 0 || ch <= 0) return;
+
+            int pw = (int)cw;
+            int ph = (int)ch;
+
+            var dv = new DrawingVisual();
+            using (var dc = dv.RenderOpen())
+            {
+                // Fill background
+                dc.DrawRectangle(new SolidColorBrush(_bgColor), null, new Rect(0, 0, pw, ph));
+
+                // Draw fish
+                foreach (var fish in _fishes)
+                {
+                    fish.Draw(dc, time);
+                }
+            }
+
+            var rtb = new RenderTargetBitmap(pw, ph, 96, 96, PixelFormats.Pbgra32);
+            rtb.Render(dv);
+            rtb.Freeze();
+
+            FrameImage.Source = rtb;
+        }
+
+        // --- Input Handling ---
 
         private void InputPollTimer_Tick(object? sender, EventArgs e)
         {
-            // Check mouse movement
             if (GetCursorPos(out var pos) && _initialMousePosition.HasValue)
             {
                 var dx = pos.X - _initialMousePosition.Value.X;
@@ -153,8 +226,7 @@ namespace FishTankScreensaver
                 }
             }
 
-            // Check if any key or mouse button is pressed
-            // Check mouse buttons (VK_LBUTTON=0x01, VK_RBUTTON=0x02, VK_MBUTTON=0x04)
+            // Check mouse buttons
             for (int vk = 0x01; vk <= 0x04; vk++)
             {
                 if ((GetAsyncKeyState(vk) & 0x8000) != 0)
@@ -164,7 +236,7 @@ namespace FishTankScreensaver
                 }
             }
 
-            // Check keyboard keys (0x08 through 0xFE covers all virtual key codes)
+            // Check keyboard
             for (int vk = 0x08; vk <= 0xFE; vk++)
             {
                 if ((GetAsyncKeyState(vk) & 0x8000) != 0)
@@ -179,12 +251,14 @@ namespace FishTankScreensaver
         {
             if (_isClosing) return;
             _isClosing = true;
+            _animationTimer?.Stop();
             _inputPollTimer?.Stop();
             Close();
         }
 
         protected override void OnClosed(EventArgs e)
         {
+            _animationTimer?.Stop();
             _inputPollTimer?.Stop();
             base.OnClosed(e);
         }
