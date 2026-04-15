@@ -8,7 +8,7 @@ setlocal
 echo Building Fish Tank Screensaver...
 echo.
 
-dotnet publish -c Release -r win-x64 --self-contained false -o publish
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
 
 if %ERRORLEVEL% neq 0 (
     echo.
@@ -21,14 +21,14 @@ echo Build successful!
 
 REM Rename .exe to .scr for Windows screensaver
 if exist "publish\FishTankScreensaver.scr" del "publish\FishTankScreensaver.scr"
-copy "publish\FishTankScreensaver.exe" "publish\FishTankScreensaver.scr" >nul
+rename "publish\FishTankScreensaver.exe" "FishTankScreensaver.scr"
 
 echo Created: publish\FishTankScreensaver.scr
 
 if "%1"=="--install" (
     echo.
     echo Installing screensaver...
-    copy "publish\FishTankScreensaver.scr" "%SYSTEMROOT%\System32\FishTankScreensaver.scr" >nul 2>&1
+    copy /Y "publish\FishTankScreensaver.scr" "%SYSTEMROOT%\System32\FishTankScreensaver.scr" >nul 2>&1
     if %ERRORLEVEL% neq 0 (
         echo.
         echo ERROR: Installation requires administrator privileges.
