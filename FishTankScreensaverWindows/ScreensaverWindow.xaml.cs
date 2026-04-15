@@ -46,6 +46,22 @@ namespace FishTankScreensaver
                 WindowStartupLocation = WindowStartupLocation.CenterScreen;
             }
 
+            // Set loading overlay to match the user's chosen background color
+            try
+            {
+                var preloadSettings = ScreensaverSettings.Load();
+                var hex = preloadSettings.BackgroundColor;
+                if (hex.Length == 6)
+                {
+                    var r = Convert.ToByte(hex.Substring(0, 2), 16);
+                    var g = Convert.ToByte(hex.Substring(2, 2), 16);
+                    var b = Convert.ToByte(hex.Substring(4, 2), 16);
+                    LoadingOverlay.Background = new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(r, g, b));
+                }
+            }
+            catch { }
+
             Loaded += ScreensaverWindow_Loaded;
         }
 
@@ -77,20 +93,39 @@ namespace FishTankScreensaver
                 WebView.CoreWebView2.Settings.IsZoomControlEnabled = false;
                 WebView.CoreWebView2.Settings.IsStatusBarEnabled = false;
 
+                var settings = ScreensaverSettings.Load();
+                var bgColor = settings.BackgroundColor;
+
                 WebView.CoreWebView2.NavigationCompleted += async (s, args) =>
                 {
-                    // Kill scrollbars and disable all pointer interaction in the page
-                    await WebView.CoreWebView2.ExecuteScriptAsync(@"
+                    await WebView.CoreWebView2.ExecuteScriptAsync($@"
                         document.documentElement.style.overflow = 'hidden';
                         document.body.style.overflow = 'hidden';
                         document.body.style.margin = '0';
                         document.body.style.padding = '0';
                         document.body.style.pointerEvents = 'none';
+                        document.body.style.background = '#{bgColor}';
+
+                        // Force background color on the canvas
+                        var canvas = document.getElementById('swim-canvas');
+                        if (canvas) {{
+                            canvas.style.setProperty('background', '#{bgColor}', 'important');
+
+                            // Monkey-patch clearRect to fill with bg color instead of clearing
+                            var ctx = canvas.getContext('2d');
+                            var origClearRect = ctx.clearRect.bind(ctx);
+                            ctx.clearRect = function(x, y, w, h) {{
+                                origClearRect(x, y, w, h);
+                                var prevFill = ctx.fillStyle;
+                                ctx.fillStyle = '#{bgColor}';
+                                ctx.fillRect(x, y, w, h);
+                                ctx.fillStyle = prevFill;
+                            }};
+                        }}
                     ");
                     Dispatcher.Invoke(() => LoadingOverlay.Visibility = Visibility.Collapsed);
                 };
 
-                var settings = ScreensaverSettings.Load();
                 WebView.CoreWebView2.Navigate(settings.BuildTankUrl());
             }
             catch (Exception ex)
