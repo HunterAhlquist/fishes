@@ -104,9 +104,14 @@ namespace FishTankScreensaver
             if (_isLoading) return;
             _isLoading = true;
 
+            FishLog.Log($"LoadFish: starting, sort={_settings.SortType}, count={_settings.FishCount}");
+
             var fishDataList = await FishAPI.FetchFishAsync(_settings.SortType, _settings.FishCount);
+            FishLog.Log($"LoadFish: API returned {fishDataList.Count} entries");
 
             var validFish = fishDataList.FindAll(f => f.ImageURL != null && f.ImageURL.StartsWith("http"));
+            FishLog.Log($"LoadFish: {validFish.Count} have valid image URLs");
+
             if (validFish.Count == 0)
             {
                 _isLoading = false;
@@ -117,13 +122,18 @@ namespace FishTankScreensaver
             var fishSize = CalculateFishSize();
             double cw = RootGrid.ActualWidth;
             double ch = RootGrid.ActualHeight;
+            FishLog.Log($"LoadFish: canvas={cw}x{ch}, fishSize={fishSize.Width}x{fishSize.Height}");
 
             var newFishes = new List<Fish>();
 
             foreach (var fishData in validFish)
             {
                 var imageBytes = await FishAPI.LoadImageDataAsync(fishData.ImageURL!);
-                if (imageBytes == null) continue;
+                if (imageBytes == null)
+                {
+                    FishLog.Log($"LoadFish: failed to download image for {fishData.Id}");
+                    continue;
+                }
 
                 try
                 {
@@ -139,12 +149,16 @@ namespace FishTankScreensaver
                         fishData.ArtistName, fishData.Id, fishData.Score);
                     newFishes.Add(fish);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    FishLog.Log($"LoadFish: error creating fish {fishData.Id}: {ex.Message}");
+                }
             }
 
             _fishes.Clear();
             _fishes.AddRange(newFishes);
             _isLoading = false;
+            FishLog.Log($"LoadFish: done, {_fishes.Count} fish created");
 
             if (_fishes.Count > 0)
                 StatusText.Visibility = Visibility.Collapsed;

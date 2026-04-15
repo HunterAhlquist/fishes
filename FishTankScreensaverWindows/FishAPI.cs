@@ -38,11 +38,18 @@ namespace FishTankScreensaver
                 if (sortType == "random")
                     url += "&random=true";
 
+                FishLog.Log($"FetchFish: requesting {url}");
+
                 var response = await Http.GetStringAsync(url);
+                FishLog.Log($"FetchFish: received {response.Length} chars");
+
                 using var doc = JsonDocument.Parse(response);
 
                 if (!doc.RootElement.TryGetProperty("data", out var dataArray))
+                {
+                    FishLog.Log("FetchFish: no 'data' property in response");
                     return results;
+                }
 
                 foreach (var item in dataArray.EnumerateArray())
                 {
@@ -82,8 +89,13 @@ namespace FishTankScreensaver
                         Score = score
                     });
                 }
+
+                FishLog.Log($"FetchFish: parsed {results.Count} fish");
             }
-            catch { }
+            catch (Exception ex)
+            {
+                FishLog.Log($"FetchFish ERROR: {ex}");
+            }
             return results;
         }
 
@@ -93,8 +105,9 @@ namespace FishTankScreensaver
             {
                 return await Http.GetByteArrayAsync(url);
             }
-            catch
+            catch (Exception ex)
             {
+                FishLog.Log($"LoadImage ERROR ({url}): {ex.Message}");
                 return null;
             }
         }
