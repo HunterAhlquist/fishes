@@ -997,6 +997,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Background color parameter (hex without #, e.g. bg=e0f7fa)
     if (bgParam && /^[0-9a-fA-F]{6}$/.test(bgParam)) {
         swimCanvas.style.background = '#' + bgParam;
+        // Store for use in animation loop fill
+        window._tankBgColor = '#' + bgParam;
     }
 
     // Validate sort parameter and set dropdown
@@ -1423,7 +1425,12 @@ let foodDetectionCache = new Map();
 let cacheUpdateCounter = 0;
 
 function animateFishes() {
-    swimCtx.clearRect(0, 0, swimCanvas.width, swimCanvas.height);
+    if (window._tankBgColor) {
+        swimCtx.fillStyle = window._tankBgColor;
+        swimCtx.fillRect(0, 0, swimCanvas.width, swimCanvas.height);
+    } else {
+        swimCtx.clearRect(0, 0, swimCanvas.width, swimCanvas.height);
+    }
     const time = Date.now() / 500;
 
     // Update fish count display occasionally
