@@ -18,7 +18,6 @@ namespace FishTankScreensaver
 
             if (isPreview)
             {
-                // Preview mode: small resizable window, not topmost
                 WindowStyle = WindowStyle.SingleBorderWindow;
                 WindowState = WindowState.Normal;
                 Topmost = false;
@@ -28,7 +27,12 @@ namespace FishTankScreensaver
                 Title = "Fish Tank Screensaver Preview";
                 ResizeMode = ResizeMode.CanResize;
                 WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                // Remove the input-blocking overlay in preview mode
+                InputOverlay.Visibility = Visibility.Collapsed;
             }
+
+            // Keyboard events work at the window level regardless of WebView2
+            PreviewKeyDown += Window_KeyDown;
 
             Loaded += ScreensaverWindow_Loaded;
         }
@@ -43,15 +47,20 @@ namespace FishTankScreensaver
 
                 await WebView.EnsureCoreWebView2Async(env);
 
-                // Disable all interaction - this is a screensaver
                 WebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
                 WebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
                 WebView.CoreWebView2.Settings.IsZoomControlEnabled = false;
                 WebView.CoreWebView2.Settings.IsStatusBarEnabled = false;
 
-                // Hide loading overlay once navigation completes
-                WebView.CoreWebView2.NavigationCompleted += (s, args) =>
+                // Once navigation completes, hide loading overlay and inject CSS to kill scrollbars
+                WebView.CoreWebView2.NavigationCompleted += async (s, args) =>
                 {
+                    await WebView.CoreWebView2.ExecuteScriptAsync(@"
+                        document.documentElement.style.overflow = 'hidden';
+                        document.body.style.overflow = 'hidden';
+                        document.body.style.margin = '0';
+                        document.body.style.padding = '0';
+                    ");
                     Dispatcher.Invoke(() => LoadingOverlay.Visibility = Visibility.Collapsed);
                 };
 
@@ -75,13 +84,13 @@ namespace FishTankScreensaver
                 CloseScreensaver();
         }
 
-        private void Window_MouseDown(object sender, MouseButtonEventArgs e)
+        private void Overlay_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (!_isPreview)
                 CloseScreensaver();
         }
 
-        private void Window_MouseMove(object sender, MouseEventArgs e)
+        private void Overlay_MouseMove(object sender, MouseEventArgs e)
         {
             if (_isPreview) return;
 
@@ -93,12 +102,17 @@ namespace FishTankScreensaver
                 return;
             }
 
-            // Only close if the mouse has moved a significant amount
             var delta = currentPosition - _initialMousePosition.Value;
             if (Math.Abs(delta.X) > 10 || Math.Abs(delta.Y) > 10)
             {
                 CloseScreensaver();
             }
+        }
+
+        private void Overlay_MouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (!_isPreview)
+                CloseScreensaver();
         }
 
         private void CloseScreensaver()
