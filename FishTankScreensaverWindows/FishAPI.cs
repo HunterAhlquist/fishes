@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
 
@@ -17,7 +18,19 @@ namespace FishTankScreensaver
     public static class FishAPI
     {
         private static readonly string BackendURL = "https://fishes-be-571679687712.northamerica-northeast1.run.app";
-        private static readonly HttpClient Http = new();
+
+        private static readonly HttpClient Http = CreateHttpClient();
+
+        private static HttpClient CreateHttpClient()
+        {
+            var client = new HttpClient();
+            var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
+            // Identify ourselves clearly so network admins and the API operator
+            // can see this is a screensaver, not a bot or scraper.
+            client.DefaultRequestHeaders.UserAgent.ParseAdd(
+                $"FishTankScreensaver/{version} (Windows; .NET; +https://github.com/HunterAhlquist/fishes)");
+            return client;
+        }
 
         public static string GetOrderBy(string sortType)
         {

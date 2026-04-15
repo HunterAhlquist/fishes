@@ -13,7 +13,7 @@ on:
         type: boolean
 
 jobs:
-  build:
+  build-macos:
     runs-on: macos-15
     defaults:
       run:
@@ -49,46 +49,116 @@ jobs:
             | grep " BUILT_PRODUCTS_DIR" | sed 's/.*= //')
 
           cd "$BUILD_DIR"
-          ditto -c -k --keepParent FishTankScreensaver.saver FishTankScreensaver.zip
-          mv FishTankScreensaver.zip "$GITHUB_WORKSPACE/"
+          ditto -c -k --keepParent FishTankScreensaver.saver FishTankScreensaver-macOS.zip
+          mv FishTankScreensaver-macOS.zip "$GITHUB_WORKSPACE/"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FishTankScreensaver
-          path: FishTankScreensaver.zip
+          name: FishTankScreensaver-macOS
+          path: FishTankScreensaver-macOS.zip
+
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: FishTankScreensaverWindows
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build screensaver
+        run: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
+
+      - name: Package
+        run: |
+          Copy-Item "publish\FishTankScreensaver.exe" "publish\FishTankScreensaver.scr"
+          Compress-Archive -Path "publish\FishTankScreensaver.scr" -DestinationPath "$env:GITHUB_WORKSPACE\FishTankScreensaver-Windows.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FishTankScreensaver-Windows
+          path: FishTankScreensaver-Windows.zip
+
+  release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/screensaver-v') || inputs.create_release == 'true'
+
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: FishTankScreensaver-macOS
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: FishTankScreensaver-Windows
 
       - name: Create release
-        if: startsWith(github.ref, 'refs/tags/screensaver-v') || inputs.create_release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF_NAME:-screensaver-manual-$(date +%Y%m%d-%H%M%S)}"
           gh release create "$TAG" \
-            "$GITHUB_WORKSPACE/FishTankScreensaver.zip" \
+            FishTankScreensaver-macOS.zip \
+            FishTankScreensaver-Windows.zip \
+            --repo "$GITHUB_REPOSITORY" \
             --title "Fish Tank Screensaver ${TAG#screensaver-}" \
             --notes "$(cat <<'NOTES'
-          ## 🐟 Fish Tank Screensaver for macOS
+          ## Fish Tank Screensaver
 
-          A native macOS screensaver that displays community-drawn fish from [DrawAFish.com](https://drawafish.com).
+          A native screensaver that displays community-drawn fish from [DrawAFish.com](https://drawafish.com). Available for macOS and Windows.
 
-          ### Installation
-          1. Download **FishTankScreensaver.zip** below
-          2. Unzip the file
-          3. Double-click **FishTankScreensaver.saver**
-          4. macOS will ask if you want to install it — click **Install**
-          5. Go to **System Settings > Screen Saver** and select **Fish Tank**
+          ---
+
+          ### macOS
+
+          **Download:** `FishTankScreensaver-macOS.zip`
+
+          **Installation:**
+          1. Unzip the file
+          2. Double-click **FishTankScreensaver.saver**
+          3. macOS will ask if you want to install it — click **Install**
+          4. Go to **System Settings > Screen Saver** and select **Fish Tank**
 
           > **Note:** Since this screensaver is not signed with an Apple Developer certificate, you may need to right-click the .saver file and select "Open" instead of double-clicking, then confirm you want to open it.
 
-          ### Options
-          Click "Options..." in Screen Saver settings to configure:
+          **Requirements:** macOS 13.0 (Ventura) or later
+
+          ---
+
+          ### Windows
+
+          **Download:** `FishTankScreensaver-Windows.zip`
+
+          **Installation:**
+          1. Unzip the file
+          2. Right-click **FishTankScreensaver.scr** and select **Install**
+          3. Or copy it to `C:\Windows\System32\` (requires administrator)
+          4. Open **Settings > Personalization > Lock screen > Screen saver** and select **FishTankScreensaver**
+
+          **Requirements:** Windows 10 or later, .NET 8 Runtime
+
+          > **Note:** The Windows screensaver connects to the DrawAFish.com API on startup to fetch fish data and images. This one-time outbound HTTPS request on screensaver activation may trigger false-positive botnet/C2 alerts on enterprise networks, since the traffic pattern (a renamed .scr executable making outbound requests to a cloud endpoint) can resemble command-and-control beaconing. The screensaver identifies itself via a descriptive User-Agent header (`FishTankScreensaver/<version>`) and only makes requests once per activation — it does not poll or beacon. Network administrators can allowlist the domain `fishes-be-571679687712.northamerica-northeast1.run.app` or review the source code in this repository.
+
+          ---
+
+          ### Options (both platforms)
+          Click the settings/options button in Screen Saver preferences to configure:
           - **Background color**
-          - **Number of fish** (1–100)
+          - **Number of fish** (1-100)
           - **Fish sorting** (Recent / Popular / Random)
 
-          ### Requirements
-          - macOS 13.0 (Ventura) or later
-          - Internet connection (fish are loaded from DrawAFish.com)
+          ### How it works
+          Both screensavers fetch community-drawn fish from the DrawAFish.com API and render them natively with animated swimming physics — no web browser or WebView is used. An internet connection is required on activation.
           NOTES
           )"
