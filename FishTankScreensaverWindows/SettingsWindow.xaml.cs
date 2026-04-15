@@ -112,13 +112,11 @@ namespace FishTankScreensaver
                 _settings.SortType = (string)selected.Tag;
 
             _settings.Save();
-            DialogResult = true;
             Close();
         }
 
         private void Cancel_Click(object sender, RoutedEventArgs e)
         {
-            DialogResult = false;
             Close();
         }
 

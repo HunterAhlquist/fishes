@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -124,11 +126,19 @@ namespace FishTankScreensaver
             double ch = RootGrid.ActualHeight;
             FishLog.Log($"LoadFish: canvas={cw}x{ch}, fishSize={fishSize.Width}x{fishSize.Height}");
 
-            var newFishes = new List<Fish>();
-
-            foreach (var fishData in validFish)
+            // Download all images in parallel
+            var downloadTasks = validFish.Select(async fd =>
             {
-                var imageBytes = await FishAPI.LoadImageDataAsync(fishData.ImageURL!);
+                var bytes = await FishAPI.LoadImageDataAsync(fd.ImageURL!);
+                return (fd, bytes);
+            }).ToArray();
+
+            var downloads = await Task.WhenAll(downloadTasks);
+            FishLog.Log($"LoadFish: downloaded {downloads.Count(d => d.bytes != null)}/{downloads.Length} images");
+
+            var newFishes = new List<Fish>();
+            foreach (var (fishData, imageBytes) in downloads)
+            {
                 if (imageBytes == null)
                 {
                     FishLog.Log($"LoadFish: failed to download image for {fishData.Id}");
